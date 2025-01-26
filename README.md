@@ -4,7 +4,9 @@ This repo tracks the progress of **classifying emotions** using **transfer learn
 
 To the scale of the chosen datasets **_(FER2013 & AFF-WILD2)_** and the complicated task of identifying micro-expressions. I have been lucky enough to have been given access to **[Kelvin2](https://ni-hpc.github.io/nihpc-documentation/Connecting%20to%20Kelvin2/)**. A high performance cluster to aid in training and processing my model.
 
-Due to legal reasons I won't be uploading the AFF-WILD2 dataset. Instead this repo will document my layering process, upload the model that has been trained & the statistics and visualisations of my models process.
+Due to legal reasons I won't be uploading the AFF-WILD2 dataset. 
+
+Instead this repo will document my layering process, upload the model that has been trained & the statistics and visualisations of my models process.
 
 ## Current Best Model
 
