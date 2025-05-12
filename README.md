@@ -1,12 +1,10 @@
 ## Summary
 
-This repo tracks the progress of **classifying emotions** using **transfer learning** on **Deep Convulutional Neural Network**, **MobileNetV2**.
+This repo tracks the progress of **classifying emotions** using **transfer learning** on **Deep Convulutional Neural Network**, **MobileNetV1**.
 
-To the scale of the chosen datasets **_(FER2013 & AFF-WILD2)_** and the complicated task of identifying micro-expressions. I have been lucky enough to have been given access to **[Kelvin2](https://ni-hpc.github.io/nihpc-documentation/Connecting%20to%20Kelvin2/)**. A high performance cluster to aid in training and processing my model.
+This repository follows the process training and testing a multi-classification model for 7 emotions on an open source dataset known as 'FaceRec2' ().
 
-Due to legal reasons I won't be uploading the AFF-WILD2 dataset. 
-
-Instead this repo will document my layering process, upload the model that has been trained & the statistics and visualisations of my models process.
+I have been lucky enough to have been given access to **[Kelvin2](https://ni-hpc.github.io/nihpc-documentation/Connecting%20to%20Kelvin2/)**. A high performance cluster to aid in training and processing my model.
 
 ## Current Best Model
 
