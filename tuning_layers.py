@@ -54,9 +54,6 @@ ft_file = f'../../../../../../mnt/scratch2/users/jsteele/facerecV2_models/face_r
 data_train = "../../../../../../../mnt/scratch2/users/jsteele/facerec-2_data/facerec_train.h5"
 data_test_and_val = "../../../../../../../mnt/scratch2/users/jsteele/facerec-2_data/facerec_test_and_val.h5"
 
-
-# load in FirstWorkSpace
-
 with h5py.File(data_train, 'r') as f:
     X_train = f['X_train'][:]
     y_train = f['y_train'][:]
