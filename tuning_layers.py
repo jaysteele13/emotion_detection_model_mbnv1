@@ -1,230 +1,311 @@
-print("starting imports...")
-import tensorflow as tf
-import numpy as np
-import h5py
-import math
-from tensorflow.keras import layers, models
-from tensorflow.keras.applications import MobileNetV2
-from tensorflow.keras import regularizers
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-from tensorflow.keras.utils import to_categorical
-from tensorflow.keras import regularizers
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, BatchNormalization, Dropout, GlobalMaxPooling2D
-from tensorflow.keras.models import Model
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras import regularizers
 
-import tensorflow as tf
-from tensorflow.keras.applications import MobileNetV2
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import (
-    Conv2D, BatchNormalization, MaxPooling2D, Dropout, Flatten, Dense, Input, Resizing, Layer
-)
-from tensorflow.keras.regularizers import l2
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-import tensorflow.keras.backend as K
+# imports
+
+print('start imports')
 from sklearn.model_selection import train_test_split
-print("finished laaaaaaaaaad...")
-# -------- load data -----------------
+import h5py
+import datetime
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+from sklearn.utils.class_weight import compute_class_weight
+import math
+from sklearn.model_selection import StratifiedKFold
+from sklearn.utils import shuffle
+
+import numpy as np
+import cv2 as cv
+from sklearn.utils.class_weight import compute_class_weight
+from tensorflow.keras.regularizers import l2
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras.callbacks import ModelCheckpoint
+
+
+# config
+
+NUM_CLASSES = 7
+IMG_SIZE = 224
+IMG_SHAPE = (224, 224, 3)
+BATCH_SIZE = 7
+
+TRAIN_EPOCH = 100
+TRAIN_LR = 1e-4
+TRAIN_ES_PATIENCE = 7
+TRAIN_LR_PATIENCE = 3
+TRAIN_MIN_LR = 1e-6
+TRAIN_DROPOUT = 0.2
+
+FT_EPOCH = 500
+FT_LR = 1e-5
+FT_LR_DECAY_STEP = 80.0
+FT_LR_DECAY_RATE = 1
+FT_ES_PATIENCE = 20
+FT_DROPOUT = 0.3
+
+ES_LR_MIN_DELTA = 0.001 # determines what acuracy jumps must happen before early stopping also
+
+
 print("load data...")
-# train_path = 'drive/MyDrive/UNI/FYP/Demo/Initial_Model_With_Fer_affwild/Code/Affwild2/affwild_local_to_train.hdf5'
-train_path = '../../../../../../mnt/scratch2/users/jsteele/affwild_preprocessed/cross_val_batch2_datasets2.hdf5'
+version_model = 8
+tl_file = f'../../../../../../mnt/scratch2/users/jsteele/facerecV2_models/face_rec_model_{version_model}_TL.keras'
+ft_file = f'../../../../../../mnt/scratch2/users/jsteele/facerecV2_models/face_rec_model_{version_model}_FT.keras'
 
-with h5py.File(train_path, 'r') as f: 
-    X = f['X_train'][:]
-    y = f['y_train'][:]
-
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-print("data grabbed")
-print(f"x_train shape {X_train.shape}")
-print(f"y_train shape {y_train.shape}")
-print(f"x_test shape {X_test.shape}")
-print(f"y_test shape {y_test.shape}")
-
-# config values
-CONFIGURATION = {
-    "BATCH_SIZE": 64,
-    "IM_SIZE": 224,
-    "LEARNING_RATE": 1e-3,
-    "TL_N_EPOCHS": 150,
-    "FT_N_EPOCHS": 75,
-    "DROPOUT_RATE": 0.5,
-    "REGULARIZATION_RATE": 0.0,
-    "N_FILTERS": 6,
-    "KERNEL_SIZE": 3,
-    "N_STRIDES": 1,
-    "POOL_SIZE": 2,
-    "N_DENSE_1": 384,
-    "N_DENSE_2": 128,
-    "NUM_CLASSES": 7,
-    "PATCH_SIZE": 16,
-    "PROJ_DIM": 768,
-    "AFF_NAMES": ["Neutral", "Angry", "Disgust", "Fear", "Happy", "Sad", "Surprise"]   
-}
+data_train = "../../../../../../../mnt/scratch2/users/jsteele/facerec-2_data/facerec_train.h5"
+data_test_and_val = "../../../../../../../mnt/scratch2/users/jsteele/facerec-2_data/facerec_test_and_val.h5"
 
 
-# ---------- reset values START ---------
-# Model architecture
-# ---------- reset values ---------
-base_model = None
-model = None
+# load in FirstWorkSpace
 
-base_model = MobileNetV2(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
-num_classes = CONFIGURATION['NUM_CLASSES']
-base_model.trainable = False
-# ---------- reset values END ---------
+with h5py.File(data_train, 'r') as f:
+    X_train = f['X_train'][:]
+    y_train = f['y_train'][:]
 
+with h5py.File(data_test_and_val, 'r') as f:
+    X_test = f['X_test'][:]
+    y_test = f['y_test'][:]
+    X_val = f['X_val'][:]
+    y_val = f['y_val'][:]
 
-class NormalizeLayer(Layer):
-    def __init__(self, mean=None, scale=255.0, **kwargs):
-        super(NormalizeLayer, self).__init__(**kwargs)
-        self.mean = mean
-        self.scale = scale
+# data already shuffled
+def stratified_k_fold(X_train, y_train, n_splits=5):
+    # Shuffle X_train and y_train together, maintaining their pairing
+    X_train_shuffled, y_train_shuffled = shuffle(X_train, y_train, random_state=2)
 
-    def call(self, inputs):
-        if self.mean is not None:
-            inputs -= self.mean
-        return inputs / self.scale
+    # Initialize StratifiedKFold
+    skf = StratifiedKFold(n_splits=n_splits)
 
+    # List to store splits
+    splits = []
 
+    # Iterate over the splits
+    for train_idx, val_idx in skf.split(X_train_shuffled, y_train_shuffled):
+        # Split the data based on indices
+        X_train_fold, y_train_fold = X_train_shuffled[train_idx], y_train_shuffled[train_idx]
 
-# Build Model
+        # Append the split to the list
+        splits.append((X_train_fold, y_train_fold))
 
-# Input & Resizing: Prepares and normalizes input images.
-# Base Model: Leverages pre-trained feature extraction to reduce the need for training from scratch.
-# Convolutional Blocks: Capture hierarchical features, with regularization and pooling to prevent overfitting and reduce dimensions.
-# Global Max Pooling: Converts feature maps to a fixed-length vector.
-# Fully Connected Layers: Extract high-level representations and enable classification while using dropout and regularization to prevent overfitting.
-
-def build_jay_net_t1(out_dim: int, learning_rate: float) -> tf.keras.Model:
-
-    DIMX = CONFIGURATION['IM_SIZE']
-    DIMY = CONFIGURATION['IM_SIZE']
-    L2_REG = 0.01  # Regularization strength
-
-    # Input layer that accepts fixed image shape
-    input_layer = Input(shape=(DIMX, DIMY, 3))  # Assuming DIMX, DIMY = 224
-
-    # Resize layer
-    x = Resizing(DIMX, DIMY)(input_layer)
-
-    # Load the base model (MobileNetV2)
-    base_model = MobileNetV2(weights='imagenet', include_top=False, input_shape=(DIMX, DIMY, 3))
-    base_model.trainable = False  # Freeze the base model
-
-    mean = K.constant([123.68, 116.779, 103.939])  # ImageNet mean values for normalization
-    x = NormalizeLayer(mean=mean, scale=255.0)(x)
-
-    x = Conv2D(96, (3, 3), activation="selu", padding="same", kernel_regularizer=regularizers.l2(L2_REG))(x)
-    x = BatchNormalization()(x)
-    x = MaxPooling2D(pool_size=(2, 2))(x)  # This will work when the spatial dimension is large enough
-    x = Dropout(0.3)(x)
-
-    x = Conv2D(196, (3, 3), activation="selu", padding="same", kernel_regularizer=regularizers.l2(L2_REG))(x)
-    x = BatchNormalization()(x)
-    x = Conv2D(196, (3, 3), activation="selu", padding="same", kernel_regularizer=regularizers.l2(L2_REG))(x)
-    x = BatchNormalization()(x)
-    x = MaxPooling2D(pool_size=(2, 2))(x)
-    x = Dropout(0.4)(x)
-
-    # If feature map size is very small, use GlobalMaxPooling2D to avoid errors
-    x = GlobalMaxPooling2D()(x)  # This will handle small spatial dimensions like (1, 1)
-
-    # Continue with the rest of the model
-    x = Flatten()(x)
-    x = Dense(256, activation='selu', kernel_regularizer=regularizers.l2(L2_REG))(x)
-    x = BatchNormalization()(x)
-    x = Dense(128, activation='selu', kernel_regularizer=regularizers.l2(L2_REG))(x)
-    x = BatchNormalization()(x)
-    x = Dropout(0.5)(x)
-
-    # Final output layer
-    predictions = Dense(out_dim, activation='softmax', kernel_regularizer=regularizers.l2(L2_REG), name="output")(x)
-
-    # Model compilation
-    model = Model(inputs=input_layer, outputs=predictions, name="jay_net_t1")
-    model = compile_model(model, learning_rate)
-
-    return model
+    # Return shuffled training data and the list of cross-validation splits
+    return X_train_shuffled, y_train_shuffled, splits
 
 
-def compile_model(model: tf.keras.Model, learning_rate: float,
-    optimizer=tf.keras.optimizers.Adam) -> tf.keras.Model:
-    # Create the ADAM optimizer with the new learning rate
-    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
-        initial_learning_rate=learning_rate,
-        decay_steps=100000,
-        decay_rate=0.93,
-        staircase=True
-    )
-    model.compile(optimizer=optimizer(learning_rate=lr_schedule),
-      loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-    return model
+# shuffle once more
+print("Shuffle!")
+X_train, y_train, train_splits = stratified_k_fold(X_train, y_train)
+X_val, y_val, train_splits = stratified_k_fold(X_val, y_val)
 
 
-def unfreeze_base_layers(model: tf.keras.Model,
-    layers: int, learning_rate: float) -> tf.keras.Model:
+# Take third of val and add it to X train and y train
 
-    # Access the base model
-    base_model = model.layers[1]
+X_val, X_train_a, y_val, y_train_a = train_test_split(X_val, y_val, test_size=0.33)
 
-    # Unfreeze the last `layers` number of layers
-    for layer in base_model.layers[-layers:]:
-        layer.trainable = True
-
-    # Compile the model again to apply the changes
-    model = compile_model(model, learning_rate)
-    return model
+X_train = np.concatenate((X_train, X_train_a))
+y_train = np.concatenate((y_train, y_train_a))
 
 
-# ----------- Transfer learning -> train top layers --------------
+print("Shape of train_sample: {}".format(X_train.shape))
+print("Shape of train_label: {}".format(y_train.shape))
+print("Shape of valid_sample: {}".format(X_val.shape))
+print("Shape of valid_label: {}".format(y_val.shape))
+print("Shape of test_sample: {}".format(X_test.shape))
+print("Shape of test_label: {}".format(y_test.shape))
 
-# build model
-model = build_jay_net_t1(out_dim=7, learning_rate=0.0001)
+class_weights = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
+class_weights = dict(enumerate(class_weights))
 
-# model.summary()
 
-# Define the EarlyStopping callback
-early_stopping = EarlyStopping(
-    monitor='val_loss',  # Metric to monitor (e.g., 'val_loss', 'val_accuracy')
-    patience=3,  # Number of epochs to wait for improvement before stopping
-    restore_best_weights=True,  # Restore the model weights from the best epoch
-    verbose=1  # Print a message when stopping
+
+# Model Building
+input_layer = tf.keras.Input(shape=IMG_SHAPE, name='universal_input')
+
+
+sample_resizing = tf.keras.layers.Resizing(224, 224, name="resize")
+
+data_augmentation = tf.keras.Sequential([tf.keras.layers.RandomFlip(mode='horizontal'),
+                                        tf.keras.layers.RandomContrast(factor=0.3)], name="augmentation")
+preprocess_input = tf.keras.applications.mobilenet.preprocess_input
+
+backbone = tf.keras.applications.mobilenet.MobileNet(input_shape=(224, 224, 3), include_top=False, weights='imagenet')
+backbone.trainable = False
+base_model = tf.keras.Model(backbone.input, backbone.layers[-29].output, name='base_model')
+
+self_attention = tf.keras.layers.Attention(use_scale=True, name='attention')
+patch_extraction = tf.keras.Sequential([
+    tf.keras.layers.SeparableConv2D(256, kernel_size=4, strides=4, padding='same', activation='relu'),
+    tf.keras.layers.SeparableConv2D(256, kernel_size=2, strides=2, padding='valid', activation='relu'),
+    tf.keras.layers.Conv2D(256, kernel_size=1, strides=1, padding='valid', activation='relu')
+], name='patch_extraction')
+global_average_layer = tf.keras.layers.GlobalAveragePooling2D(name='gap')
+pre_classification = tf.keras.Sequential([tf.keras.layers.Dense(32, activation='relu'),
+                                          tf.keras.layers.BatchNormalization()], name='pre_classification')
+prediction_layer = tf.keras.layers.Dense(NUM_CLASSES, activation="softmax", name='classification_head')
+
+inputs = input_layer
+x = data_augmentation(inputs)
+x = preprocess_input(x)
+x = base_model(x, training=False)
+x = patch_extraction(x)
+x = global_average_layer(x)
+x = tf.keras.layers.Dropout(TRAIN_DROPOUT)(x)
+x = pre_classification(x)
+
+# fix attention
+# å
+x = tf.keras.layers.Reshape((1, 32))(x)  # Ensure 3D shape
+x = self_attention([x, x])  # Attention output shape: (None, 1, 32)
+x = tf.keras.layers.Flatten()(x)  # Convert to (None, 32)
+
+
+outputs = prediction_layer(x)
+model = tf.keras.Model(inputs, outputs, name='train-head')
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=TRAIN_LR, global_clipnorm=3.0), loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+
+
+model.summary()
+
+# Training Procedure
+log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1) # changing lr_min_delta to be bigger
+early_stopping_callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, min_delta=0.01, restore_best_weights=True)
+learning_rate_callback = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=2, verbose=1, min_delta=ES_LR_MIN_DELTA, min_lr=TRAIN_MIN_LR)
+history = model.fit(X_train, y_train, epochs=TRAIN_EPOCH, batch_size=BATCH_SIZE, validation_data=(X_val, y_val), verbose=1,
+                    class_weight=class_weights, callbacks=[early_stopping_callback, learning_rate_callback, tensorboard_callback])
+test_loss, test_acc = model.evaluate(X_test, y_test)
+print(f'§ Test Accuracy: {test_acc:.4f}')
+model.save(tl_file)
+tensorboard_cb = tf.keras.callbacks.TensorBoard(log_dir='./logs', histogram_freq=1)
+
+
+print("\n🚀 Starting Dynamic Fine-tuning ...")
+
+# Make base model trainable
+base_model.trainable = True
+total_layers = len(base_model.layers)
+
+# Fine-tuning parameters
+initial_unfreeze = 20
+increment = 10
+max_unfreeze = 60  # or use total_layers
+epochs_per_stage = 8
+total_epochs = 0
+current_unfreeze = initial_unfreeze
+val_accuracies = []
+
+# Data augmentation for fine-tuning
+FT_data_augmentation = tf.keras.Sequential([
+    tf.keras.layers.RandomFlip('horizontal'),
+    tf.keras.layers.RandomRotation(0.05),
+    tf.keras.layers.RandomZoom(0.1),
+    tf.keras.layers.RandomContrast(0.3)
+])
+
+# Freeze helper
+def freeze_layers(model, unfreeze_count):
+    fine_tune_from = total_layers - unfreeze_count
+    for i, layer in enumerate(model.layers):
+        if i < fine_tune_from:
+            layer.trainable = False
+        else:
+            layer.trainable = not isinstance(layer, tf.keras.layers.BatchNormalization)
+
+# Initial freeze before first compile
+freeze_layers(base_model, current_unfreeze)
+
+# Model building (only once)
+inputs = input_layer
+x = FT_data_augmentation(inputs)
+x = preprocess_input(x)
+x = base_model(x, training=False)
+x = patch_extraction(x)
+x = tf.keras.layers.SpatialDropout2D(FT_DROPOUT)(x)
+x = global_average_layer(x)
+x = pre_classification(x)
+x = tf.keras.layers.Dropout(FT_DROPOUT)(x)
+outputs = prediction_layer(x)
+
+model = tf.keras.Model(inputs, outputs, name="finetune_model")
+
+# Compile once initially
+model.compile(
+    optimizer=keras.optimizers.Adam(learning_rate=FT_LR, global_clipnorm=3.0),
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
 )
 
-# fit with history to report
-fit_history_t = model.fit(X_train, y_train, epochs=CONFIGURATION['TL_N_EPOCHS'], validation_data=(X_test, y_test), callbacks=[early_stopping])
+# Static callbacks (used across all stages)
+early_stopping_callback = tf.keras.callbacks.EarlyStopping(
+    monitor='val_accuracy',
+    min_delta=ES_LR_MIN_DELTA,
+    patience=20,
+    restore_best_weights=True
+)
 
-# get loss and accuracy
-loss, accuracy = model.evaluate(X_test, y_test)
-# ----------- END Transfer learning --------------
-learning_rate = 0.000001
-unfreeze=40
+callbacks_static = [early_stopping_callback, learning_rate_callback]
 
-model = unfreeze_base_layers(model, layers=unfreeze,
-        learning_rate=learning_rate)
+# Fine-tuning loop
+while current_unfreeze <= max_unfreeze:
+    print(f"\n🔓 Unfreezing last {current_unfreeze} layers ...")
+    freeze_layers(base_model, current_unfreeze)
+    
+    # Recompile with new layer trainability
+    model.compile(
+        optimizer=keras.optimizers.Adam(learning_rate=FT_LR, global_clipnorm=3.0),
+        loss='sparse_categorical_crossentropy',
+        metrics=['accuracy']
+    )
 
-fit_history_f = model.fit(X_train, y_train, epochs=CONFIGURATION['FT_N_EPOCHS'], validation_data=(X_test, y_test), callbacks=[early_stopping])
+    # TensorBoard log for current stage
+    log_dir = f"logs/fit/{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}_unfreeze_{current_unfreeze}"
+    tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
 
-# --------------- UnFreese first 92 layers then train again ---------------
+    # Combine callbacks
+    callbacks = callbacks_static + [tensorboard_callback]
 
-# get loss and accuracy
-fine_tune_history = fit_history_f.history
-transfer_learning_history = fit_history_t.history
-loss, accuracy = model.evaluate(X_test, y_test)
+    # Train
+    history_finetune = model.fit(
+        X_train, y_train,
+        epochs=total_epochs + epochs_per_stage,
+        initial_epoch=total_epochs,
+        batch_size=BATCH_SIZE,
+        validation_data=(X_val, y_val),
+        class_weight=class_weights,
+        callbacks=callbacks,
+        verbose=1
+    )
 
-# --------------- END Freese  40 layers  ---------------
+    # Update epoch counter
+    total_epochs += epochs_per_stage
+
+    # Track validation performance
+    val_acc = history_finetune.history.get('val_accuracy', [None])[-1]
+    val_accuracies.append(val_acc)
+    print(f"✅ Finished stage unfreezing {current_unfreeze} layers - val_acc: {val_acc:.4f}")
+
+    # Optional: Early break if performance stagnates across stages
+    if len(val_accuracies) > 3 and val_accuracies[-1] < max(val_accuracies[-4:-1]):
+        print("🛑 No improvement over 3 stages. Stopping early.")
+        break
+
+    # Next stage
+    current_unfreeze += increment
+
+# Final Evaluation
+print("\n📊 Final Evaluation:")
+test_loss, test_acc = model.evaluate(X_test, y_test)
+print(f'✅ Test Accuracy: {test_acc:.4f}')
+
 
 # Save History to plot later
 with h5py.File('tl_model_history.h5', 'w') as f:
-    for key, value in transfer_learning_history.items():
+    for key, value in history.history.items():
         f.create_dataset(key, data=value)
 
 with h5py.File('ft_model_history.h5', 'w') as f:
-    for key, value in fine_tune_history.items():
+    for key, value in history_finetune.history.items():
         f.create_dataset(key, data=value)
 
 #--------------save model
-model.save('../../../../../../mnt/scratch2/users/jsteele/aff_models/aff_model_1.keras')
+model.save(ft_file)
+
+# -------------------------------------------
